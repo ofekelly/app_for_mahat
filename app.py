@@ -137,7 +137,7 @@ def run_task():
     rid = st.query_params.get("rid", [""])
     if isinstance(rid, list): rid = rid[0]
     st.header("תיוג תשובות: אדם או מכונה?")
-    st.write("לכל פריט מוצגים פרומפט ותשובה. סמנו אם לדעתכם נכתב ע"י **אדם** או **מכונה**.")
+    st.write('לכל פריט מוצגים פרומפט ותשובה. סמנו אם לדעתכם נכתב ע"י **אדם** או **מכונה**.')
     respondent_id = st.text_input("RID (מזהה נבדק)", value=rid, help="אפשר אימייל או מזהה פנימי.")
     k = st.session_state.get("k", DEFAULT_K)
     k = st.number_input("כמה פריטים תקבל/י (K)", min_value=1, value=int(k), step=1)
@@ -225,5 +225,3 @@ if mode == "Admin":
     admin_panel()
 run_task()
 st.markdown("---")
-st.caption("נוצר ע"י ChatGPT • Persist by SID (cache+disk) • CSV/Excel נתמך.")
-    
