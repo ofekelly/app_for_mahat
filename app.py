@@ -1,12 +1,10 @@
+
 # app.py
-# Streamlit Prompt+Response Labeling (Human vs Machine) — Excel/CSV, with dataset persistence per Survey ID
 import streamlit as st
 import pandas as pd
 import numpy as np
-import io
-import hashlib
-import os
-from datetime import datetime, timezone 
+import io, os, hashlib
+from datetime import datetime, timezone
 
 st.set_page_config(page_title="תיוג אדם/מכונה לתשובות", page_icon="🔎", layout="centered")
 
@@ -16,19 +14,14 @@ try:
 except Exception:
     _SECRETS = {}
 def _sec_get(key, default=None):
-    try:
-        return _SECRETS.get(key, default)
-    except Exception:
-        return default
+    try: return _SECRETS.get(key, default)
+    except Exception: return default
 SURVEY_ID = _sec_get("survey_id", "default_survey")
-STORAGE_MODE = _sec_get("storage_mode", "csv")
 ADMIN_PASSWORD = _sec_get("admin_password")
-GSHEETS = _sec_get("gsheets", {})
 
-def _now_iso():
-    return datetime.now(timezone.utc).isoformat()
-def _stable_sample_seed(respondent_id: str, survey_id: str) -> int:
-    digest = hashlib.sha256(f"{respondent_id}::{survey_id}".encode("utf-8")).hexdigest()
+def _now_iso(): return datetime.now(timezone.utc).isoformat()
+def _stable_sample_seed(rid: str, sid: str) -> int:
+    digest = hashlib.sha256(f"{rid}::{sid}".encode("utf-8")).hexdigest()
     return int(digest[:8], 16)
 def _norm_truth(v):
     if v is None: return None
@@ -44,20 +37,14 @@ def _read_items_from_excel(file_bytes: bytes, filename: str = "") -> pd.DataFram
     else:
         df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
     cols_lower = {c.lower(): c for c in df.columns}
-    prompt_col = None
-    for cand in ["test_prompt","prompt","פרומפט","שאלה","טקסט"]:
-        if cand in cols_lower: prompt_col = cols_lower[cand]; break
-    resp_col = None
-    for cand in ["response","תשובה","answer","טקסט_תשובה"]:
-        if cand in cols_lower: resp_col = cols_lower[cand]; break
-    if prompt_col is None or resp_col is None:
-        if df.shape[1] >= 2 and prompt_col is None and resp_col is None:
+    prompt_col = next((cols_lower[c] for c in ["test_prompt","prompt","פרומפט","שאלה","טקסט"] if c in cols_lower), None)
+    resp_col = next((cols_lower[c] for c in ["response","תשובה","answer","טקסט_תשובה"] if c in cols_lower), None)
+    if not prompt_col or not resp_col:
+        if df.shape[1] >= 2 and not prompt_col and not resp_col:
             prompt_col, resp_col = df.columns[0], df.columns[1]
         else:
             raise ValueError("חובה עמודות 'test_prompt' ו-'response'.")
-    truth_col = None
-    for cand in ["ground_truth","truth","label","gt","is_human","מקור"]:
-        if cand in cols_lower: truth_col = cols_lower[cand]; break
+    truth_col = next((cols_lower[c] for c in ["ground_truth","truth","label","gt","is_human","מקור"] if c in cols_lower), None)
     df = df.rename(columns={prompt_col:"test_prompt", resp_col:"response"})
     if truth_col: df = df.rename(columns={truth_col:"ground_truth"})
     df["test_prompt"] = df["test_prompt"].astype(str).str.strip()
@@ -69,63 +56,45 @@ def _read_items_from_excel(file_bytes: bytes, filename: str = "") -> pd.DataFram
     else: df["ground_truth"] = None
     return df[["id","test_prompt","response","ground_truth"]].reset_index(drop=True)
 
-# ---------- Simple on-disk persistence for dataset (per Survey ID) ----------
+@st.cache_resource
+def datasets_cache():
+    return {}
+
 DATA_DIR = "datasets"
 os.makedirs(DATA_DIR, exist_ok=True)
-
-def save_items_to_disk(df: pd.DataFrame, survey_id: str):
-    """Save items to datasets/<sid>.csv so other sessions (Respondent) can load them."""
-    if not survey_id:
-        return
-    path = os.path.join(DATA_DIR, f"{survey_id}.csv")
-    try:
-        df.to_csv(path, index=False)
-    except Exception as e:
-        st.error(f"שגיאה בשמירת מאגר לשרת: {e}")
-
-def load_items_from_disk(survey_id: str):
-    """Try to load items from datasets/<sid>.csv. Return DataFrame or None."""
-    if not survey_id:
-        return None
-    path = os.path.join(DATA_DIR, f"{survey_id}.csv")
-    if not os.path.exists(path):
-        return None
-    try:
-        df = pd.read_csv(path)
-        if "ground_truth" not in df.columns:
-            df["ground_truth"] = None
-        if "id" not in df.columns:
-            df.insert(0, "id", range(1, len(df)+1))
-        return df[["id","test_prompt","response","ground_truth"]]
-    except Exception as e:
-        st.error(f"שגיאה בטעינת מאגר מהשרת: {e}")
-        return None
+def save_items_to_disk(df: pd.DataFrame, sid: str):
+    if not sid: return
+    df.to_csv(os.path.join(DATA_DIR, f"{sid}.csv"), index=False)
+def load_items_from_disk(sid: str):
+    p = os.path.join(DATA_DIR, f"{sid}.csv")
+    if not os.path.exists(p): return None
+    df = pd.read_csv(p)
+    if "ground_truth" not in df.columns: df["ground_truth"] = None
+    if "id" not in df.columns: df.insert(0,"id", range(1,len(df)+1))
+    return df[["id","test_prompt","response","ground_truth"]]
 
 class CsvStorage:
     def __init__(self):
         self.responses_csv = "responses.csv"
         self.assign_csv = "assignments.csv"
-        for path, columns in [
+        for path, cols in [
             (self.responses_csv, ["timestamp_utc","survey_id","respondent_id","item_id","label","label_bin","prompt","response","truth","correct"]),
             (self.assign_csv, ["timestamp_utc","survey_id","respondent_id","k","item_ids"]),
         ]:
             try: pd.read_csv(path)
-            except Exception: pd.DataFrame(columns=columns).to_csv(path, index=False)
-    def save_assignment(self, survey_id, respondent_id, k, item_ids):
+            except Exception: pd.DataFrame(columns=cols).to_csv(path, index=False)
+    def save_assignment(self, sid, rid, k, item_ids):
         df = pd.read_csv(self.assign_csv)
         df = pd.concat([df, pd.DataFrame([{
-            "timestamp_utc": _now_iso(),
-            "survey_id": survey_id,
-            "respondent_id": respondent_id,
-            "k": int(k),
+            "timestamp_utc": _now_iso(), "survey_id": sid, "respondent_id": rid, "k": int(k),
             "item_ids": ",".join(map(str, item_ids)),
         }])], ignore_index=True)
         df.to_csv(self.assign_csv, index=False)
-    def has_responses(self, survey_id, respondent_id):
+    def has_responses(self, sid, rid):
         try: df = pd.read_csv(self.responses_csv)
         except Exception: return False
         if df.empty: return False
-        return ((df["survey_id"]==survey_id) & (df["respondent_id"]==respondent_id)).any()
+        return ((df["survey_id"]==sid) & (df["respondent_id"]==rid)).any()
     def save_responses(self, rows):
         df = pd.read_csv(self.responses_csv)
         df = pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
@@ -135,51 +104,10 @@ class CsvStorage:
         except Exception:
             return pd.DataFrame(columns=["timestamp_utc","survey_id","respondent_id","item_id","label","label_bin","prompt","response","truth","correct"])
 
-def get_storage():
-    if STORAGE_MODE == "gsheets":
-        try:
-            import gspread
-            from google.oauth2.service_account import Credentials
-        except Exception:
-            st.error("מצב gsheets דורש gspread ו-google-auth + secrets תקינים.")
-            st.stop()
-        cfg = GSHEETS
-        creds_json = cfg.get("credentials")
-        rsp_url = cfg.get("responses_sheet_url")
-        asg_url = cfg.get("assignments_sheet_url")
-        if not creds_json or not rsp_url or not asg_url:
-            st.error("חסר gsheets.credentials/urls ב-secrets.")
-            st.stop()
-        scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
-        credentials = Credentials.from_service_account_info(creds_json, scopes=scopes)
-        gc = gspread.authorize(credentials)
-        responses_sh = gc.open_by_url(rsp_url).sheet1
-        assignments_sh = gc.open_by_url(asg_url).sheet1
-        if len(responses_sh.get_all_values())==0:
-            responses_sh.append_row(["timestamp_utc","survey_id","respondent_id","item_id","label","label_bin","prompt","response","truth","correct"])
-        if len(assignments_sh.get_all_values())==0:
-            assignments_sh.append_row(["timestamp_utc","survey_id","respondent_id","k","item_ids"])
-        class GSheetsStorage:
-            def save_assignment(self, survey_id, respondent_id, k, item_ids):
-                assignments_sh.append_row([_now_iso(), survey_id, respondent_id, int(k), ",".join(map(str, item_ids))])
-            def has_responses(self, survey_id, respondent_id):
-                vals = responses_sh.col_values(2)
-                vals2 = responses_sh.col_values(3)
-                for s, r in zip(vals[1:], vals2[1:]):
-                    if s==survey_id and r==respondent_id: return True
-                return False
-            def save_responses(self, rows):
-                to_rows = [[r["timestamp_utc"], r["survey_id"], r["respondent_id"], r["item_id"], r["label"], r["label_bin"], r["prompt"], r["response"], r["truth"], r["correct"]] for r in rows]
-                responses_sh.append_rows(to_rows)
-            def load_responses(self):
-                data = responses_sh.get_all_records()
-                return pd.DataFrame(data)
-        return GSheetsStorage()
-    return CsvStorage()
+def get_storage(): return CsvStorage()
 
 def admin_panel():
     st.subheader("📋 הגדרות (Admin)")
-    st.caption("טען Excel/CSV עם 'test_prompt' ו-'response'. אפשרי 'ground_truth' (human/machine או 1/0).")
     uploaded = st.file_uploader("טעינת מאגר (Excel/CSV: xlsx/xls/csv)", type=["xlsx","xls","csv"])
     k = st.number_input("כמה פריטים לכל נבדק (K)?", min_value=1, value=st.session_state.get("k", DEFAULT_K), step=1)
     survey_id = st.text_input("Survey ID", value=st.session_state.get("survey_id", SURVEY_ID))
@@ -188,29 +116,20 @@ def admin_panel():
         try:
             df = _read_items_from_excel(uploaded.getvalue(), uploaded.name)
             st.session_state["items_df"] = df
-            st.success(f"נטענו {len(df)} פריטים.")
-            st.dataframe(df.head(20))
+            datasets_cache()[survey_id] = df
             save_items_to_disk(df, survey_id)
-            st.toast("המאגר נשמר לשרת עבור ה-Survey ID הנוכחי", icon="✅")
-            if df["ground_truth"].notna().any(): st.info("התגלתה ground_truth — יוצגו מדדי דיוק לאחר שליחה.")
+            st.success(f"נטענו {len(df)} פריטים ונשמרו לשרת.")
+            st.dataframe(df.head(20))
         except Exception as e:
             st.error(f"שגיאה בקריאת הקובץ: {e}")
     st.session_state["k"] = int(k)
     st.session_state["survey_id"] = survey_id
     if st.session_state.get("items_df") is not None and st.button("שמירת המאגר לשרת (לפי Survey ID)"):
+        datasets_cache()[survey_id] = st.session_state["items_df"]
         save_items_to_disk(st.session_state["items_df"], survey_id)
         st.success("נשמר לשרת — כעת Respondent עם אותו sid יראו את המאגר.")
     st.markdown("**קישור לשיתוף (לאחר פריסה/שיתוף):**")
     st.code("http://YOUR-APP/?sid=YOUR_SURVEY_ID&rid=USER123", language="bash")
-    st.divider()
-    st.subheader("⬇️ הורדת כל התשובות")
-    if st.button("ייצא כל התשובות ל-CSV"):
-        storage = get_storage()
-        df_all = storage.load_responses()
-        if df_all.empty:
-            st.warning("אין תשובות עדיין.")
-        else:
-            st.download_button("הורד responses.csv", data=df_all.to_csv(index=False).encode("utf-8"), file_name="responses_export.csv", mime="text/csv")
 
 def run_task():
     sid = st.query_params.get("sid", [st.session_state.get("survey_id", SURVEY_ID)])
@@ -218,26 +137,32 @@ def run_task():
     rid = st.query_params.get("rid", [""])
     if isinstance(rid, list): rid = rid[0]
     st.header("תיוג תשובות: אדם או מכונה?")
-    st.write("לכל פריט מוצגים פרומפט ותשובה. סמנו אם לדעתכם נכתב ע\"י **אדם** או **מכונה**.")
+    st.write("לכל פריט מוצגים פרומפט ותשובה. סמנו אם לדעתכם נכתב ע"י **אדם** או **מכונה**.")
     respondent_id = st.text_input("RID (מזהה נבדק)", value=rid, help="אפשר אימייל או מזהה פנימי.")
     k = st.session_state.get("k", DEFAULT_K)
     k = st.number_input("כמה פריטים תקבל/י (K)", min_value=1, value=int(k), step=1)
+
     df = st.session_state.get("items_df")
     if df is None:
+        df = datasets_cache().get(sid)
+    if df is None:
         df = load_items_from_disk(sid)
-        if df is None:
-            st.warning("המאגר טרם נטען (Admin). העלה קובץ במצב Admin, או ודא שה-Survey ID נכון.")
-            return
+    if df is None:
+        st.warning("המאגר טרם נטען (Admin). העלה קובץ במצב Admin, או ודא שה-Survey ID נכון.")
+        return
+
     if not respondent_id.strip():
         st.info("יש להזין RID כדי להתחיל.")
         return
     if k > len(df):
         st.error(f"K ({k}) גדול ממספר הפריטים ({len(df)}).")
         return
+
     seed = _stable_sample_seed(respondent_id.strip(), sid)
     rng = np.random.default_rng(seed)
     sample_idx = rng.choice(len(df), size=int(k), replace=False)
     sample_df = df.iloc[sample_idx].copy().reset_index(drop=True)
+
     st.subheader("הפריטים שלך")
     labels = []
     for i, row in sample_df.iterrows():
@@ -249,6 +174,7 @@ def run_task():
                 st.write(row["response"])
             choice = st.radio("מי כתב את התשובה?", options=["אדם","מכונה"], index=None, key=f"lbl_{row['id']}", horizontal=True)
             labels.append({"id": row["id"], "prompt": row["test_prompt"], "response": row["response"], "label": choice, "truth": row.get("ground_truth", None)})
+
     submitted = st.button("שליחה")
     if submitted:
         if any(l["label"] is None for l in labels):
@@ -263,19 +189,12 @@ def run_task():
         for l in labels:
             lab_norm = "human" if l["label"] == "אדם" else "machine"
             truth = l["truth"]
-            correct = None
-            if truth in ["human","machine"]: correct = 1 if lab_norm == truth else 0
+            correct = 1 if (truth in ["human","machine"] and lab_norm == truth) else None
             rows.append({
                 "timestamp_utc": _now_iso(),
-                "survey_id": sid,
-                "respondent_id": respondent_id.strip(),
-                "item_id": l["id"],
-                "label": lab_norm,
-                "label_bin": 1 if lab_norm == "human" else 0,
-                "prompt": l["prompt"],
-                "response": l["response"],
-                "truth": truth if truth in ["human","machine"] else None,
-                "correct": correct,
+                "survey_id": sid, "respondent_id": respondent_id.strip(),
+                "item_id": l["id"], "label": lab_norm, "label_bin": 1 if lab_norm == "human" else 0,
+                "prompt": l["prompt"], "response": l["response"], "truth": truth, "correct": correct,
             })
         storage.save_responses(rows)
         st.success("התשובות נקלטו! תודה 🙏")
@@ -289,14 +208,11 @@ def run_task():
             acc = (df_truth["label"] == df_truth["truth"]).mean() if not df_truth.empty else None
             if acc is not None:
                 st.write(f"דיוק (אם קיימת אמת-מידה): **{acc*100:.1f}%**")
+                import pandas as pd
                 cm = pd.crosstab(df_truth["truth"], df_truth["label"], dropna=False)
                 st.dataframe(cm)
-        st.download_button(
-            "הורד CSV של התיוגים שלך",
-            data=df_me.to_csv(index=False).encode("utf-8"),
-            file_name=f"labels_{sid}_{respondent_id.strip()}.csv",
-            mime="text/csv"
-        )
+        st.download_button("הורד CSV של התיוגים שלך", data=df_me.to_csv(index=False).encode("utf-8"),
+                           file_name=f"labels_{sid}_{respondent_id.strip()}.csv", mime="text/csv")
 
 st.title("🔎 תיוג אדם/מכונה לתשובות")
 mode = st.sidebar.selectbox("מצב", ["Respondent", "Admin"])
@@ -309,4 +225,5 @@ if mode == "Admin":
     admin_panel()
 run_task()
 st.markdown("---")
-st.caption("נוצר ע\"י ChatGPT • Streamlit • שמירה ל-CSV מקומי או ל-Google Sheets (secrets).")
+st.caption("נוצר ע"י ChatGPT • Persist by SID (cache+disk) • CSV/Excel נתמך.")
+    
