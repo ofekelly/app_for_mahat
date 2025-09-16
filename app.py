@@ -6,7 +6,7 @@ import numpy as np
 import io
 import hashlib
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone 
 
 st.set_page_config(page_title="תיוג אדם/מכונה לתשובות", page_icon="🔎", layout="centered")
 
