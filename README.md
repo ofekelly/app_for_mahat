@@ -1,6 +1,6 @@
-# Streamlit Prompt+Response Labeling — ללא ביטחון
+# Streamlit Prompt+Response Labeling — Excel/CSV
 
-- מגריל K פריטים מתוך Excel (`test_prompt`, `response`)
+- מגריל K פריטים מתוך Excel/CSV (`test_prompt`, `response`)
 - תיוג אדם/מכונה
 - שמירה ל-CSV לוקלי (ברירת מחדל) או Google Sheets (אם מגדירים secrets)
 
@@ -17,3 +17,4 @@ streamlit run app.py
 ## קלט
 - חובה: `test_prompt`, `response`
 - אופציונלי: `ground_truth`, `id`
+- נתמך: `.xlsx`, `.xls`, `.csv`

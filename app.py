@@ -1,10 +1,11 @@
 # app.py
-# Streamlit Prompt+Response Labeling (Human vs Machine) — no confidence
+# Streamlit Prompt+Response Labeling (Human vs Machine) — supports Excel (.xlsx/.xls) and CSV
 import streamlit as st
 import pandas as pd
 import numpy as np
 import io
 import hashlib
+import os
 from datetime import datetime, timezone
 
 st.set_page_config(page_title="תיוג אדם/מכונה לתשובות", page_icon="🔎", layout="centered")
@@ -35,8 +36,14 @@ def _norm_truth(v):
     if s in ["human","אדם","1","true","yes","y"]: return "human"
     if s in ["machine","מכונה","0","false","no","n","ai","model"]: return "machine"
     return None
-def _read_items_from_excel(file_bytes: bytes) -> pd.DataFrame:
-    df = pd.read_excel(io.BytesIO(file_bytes))
+
+def _read_items_from_excel(file_bytes: bytes, filename: str = "") -> pd.DataFrame:
+    ext = os.path.splitext(filename.lower())[1]
+    if ext == ".csv":
+        df = pd.read_csv(io.BytesIO(file_bytes))
+    else:
+        # Explicit engine improves reliability on Streamlit Cloud
+        df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
     cols_lower = {c.lower(): c for c in df.columns}
     prompt_col = None
     for cand in ["test_prompt","prompt","פרומפט","שאלה","טקסט"]:
@@ -103,7 +110,7 @@ def get_storage():
             import gspread
             from google.oauth2.service_account import Credentials
         except Exception:
-            st.error("מצב gsheets דורש gspread ו-google-auth ב-requirements + הגדרות secrets.")
+            st.error("מצב gsheets דורש gspread ו-google-auth + secrets תקינים.")
             st.stop()
         cfg = GSHEETS
         creds_json = cfg.get("credentials")
@@ -117,7 +124,6 @@ def get_storage():
         gc = gspread.authorize(credentials)
         responses_sh = gc.open_by_url(rsp_url).sheet1
         assignments_sh = gc.open_by_url(asg_url).sheet1
-        # init headers
         if len(responses_sh.get_all_values())==0:
             responses_sh.append_row(["timestamp_utc","survey_id","respondent_id","item_id","label","label_bin","prompt","response","truth","correct"])
         if len(assignments_sh.get_all_values())==0:
@@ -142,14 +148,14 @@ def get_storage():
 
 def admin_panel():
     st.subheader("📋 הגדרות (Admin)")
-    st.caption("טען Excel עם 'test_prompt' ו-'response'. אפשרי 'ground_truth' (human/machine או 1/0).")
-    uploaded = st.file_uploader("טעינת מאגר (Excel: xlsx/xls)", type=["xlsx","xls"])
+    st.caption("טען Excel/CSV עם 'test_prompt' ו-'response'. אפשרי 'ground_truth' (human/machine או 1/0).")
+    uploaded = st.file_uploader("טעינת מאגר (Excel/CSV: xlsx/xls/csv)", type=["xlsx","xls","csv"])
     k = st.number_input("כמה פריטים לכל נבדק (K)?", min_value=1, value=st.session_state.get("k", DEFAULT_K), step=1)
     survey_id = st.text_input("Survey ID", value=st.session_state.get("survey_id", SURVEY_ID))
     if "items_df" not in st.session_state: st.session_state["items_df"] = None
     if uploaded:
         try:
-            df = _read_items_from_excel(uploaded.getvalue())
+            df = _read_items_from_excel(uploaded.getvalue(), uploaded.name)
             st.session_state["items_df"] = df
             st.success(f"נטענו {len(df)} פריטים.")
             st.dataframe(df.head(20))
