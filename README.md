@@ -1,20 +1,7 @@
-# Streamlit Prompt+Response Labeling — Excel/CSV
+# Streamlit Prompt+Response Labeling — Excel/CSV + Persisted Dataset
 
-- מגריל K פריטים מתוך Excel/CSV (`test_prompt`, `response`)
-- תיוג אדם/מכונה
-- שמירה ל-CSV לוקלי (ברירת מחדל) או Google Sheets (אם מגדירים secrets)
+- Admin מעלה Excel/CSV פעם אחת לכל Survey ID → נשמר לקובץ בשרת.
+- Respondent נטען אוטומטית לפי `?sid=...` גם בסשן נפרד.
+- תיוג אדם/מכונה, K פריטים, יצוא CSV.
 
-## ריצה לוקלית
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## פריסה חינמית: Streamlit Cloud
-- העלה ל-GitHub → Deploy → קבל URL ציבורי לשיתוף
-- ללא Google Sheets הנתונים בענן זמניים; הורד CSV מ-Admin בסיום
-
-## קלט
-- חובה: `test_prompt`, `response`
-- אופציונלי: `ground_truth`, `id`
-- נתמך: `.xlsx`, `.xls`, `.csv`
+חשוב: ב-Streamlit Cloud הקבצים נשמרים כל עוד האפליקציה רצה. אחרי Restart/Deploy יש להעלות מחדש.

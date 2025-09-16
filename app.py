@@ -1,5 +1,5 @@
 # app.py
-# Streamlit Prompt+Response Labeling (Human vs Machine) — supports Excel (.xlsx/.xls) and CSV
+# Streamlit Prompt+Response Labeling (Human vs Machine) — Excel/CSV, with dataset persistence per Survey ID
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -42,7 +42,6 @@ def _read_items_from_excel(file_bytes: bytes, filename: str = "") -> pd.DataFram
     if ext == ".csv":
         df = pd.read_csv(io.BytesIO(file_bytes))
     else:
-        # Explicit engine improves reliability on Streamlit Cloud
         df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
     cols_lower = {c.lower(): c for c in df.columns}
     prompt_col = None
@@ -69,6 +68,38 @@ def _read_items_from_excel(file_bytes: bytes, filename: str = "") -> pd.DataFram
     if "ground_truth" in df.columns: df["ground_truth"] = df["ground_truth"].apply(_norm_truth)
     else: df["ground_truth"] = None
     return df[["id","test_prompt","response","ground_truth"]].reset_index(drop=True)
+
+# ---------- Simple on-disk persistence for dataset (per Survey ID) ----------
+DATA_DIR = "datasets"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+def save_items_to_disk(df: pd.DataFrame, survey_id: str):
+    """Save items to datasets/<sid>.csv so other sessions (Respondent) can load them."""
+    if not survey_id:
+        return
+    path = os.path.join(DATA_DIR, f"{survey_id}.csv")
+    try:
+        df.to_csv(path, index=False)
+    except Exception as e:
+        st.error(f"שגיאה בשמירת מאגר לשרת: {e}")
+
+def load_items_from_disk(survey_id: str):
+    """Try to load items from datasets/<sid>.csv. Return DataFrame or None."""
+    if not survey_id:
+        return None
+    path = os.path.join(DATA_DIR, f"{survey_id}.csv")
+    if not os.path.exists(path):
+        return None
+    try:
+        df = pd.read_csv(path)
+        if "ground_truth" not in df.columns:
+            df["ground_truth"] = None
+        if "id" not in df.columns:
+            df.insert(0, "id", range(1, len(df)+1))
+        return df[["id","test_prompt","response","ground_truth"]]
+    except Exception as e:
+        st.error(f"שגיאה בטעינת מאגר מהשרת: {e}")
+        return None
 
 class CsvStorage:
     def __init__(self):
@@ -159,11 +190,16 @@ def admin_panel():
             st.session_state["items_df"] = df
             st.success(f"נטענו {len(df)} פריטים.")
             st.dataframe(df.head(20))
+            save_items_to_disk(df, survey_id)
+            st.toast("המאגר נשמר לשרת עבור ה-Survey ID הנוכחי", icon="✅")
             if df["ground_truth"].notna().any(): st.info("התגלתה ground_truth — יוצגו מדדי דיוק לאחר שליחה.")
         except Exception as e:
             st.error(f"שגיאה בקריאת הקובץ: {e}")
     st.session_state["k"] = int(k)
     st.session_state["survey_id"] = survey_id
+    if st.session_state.get("items_df") is not None and st.button("שמירת המאגר לשרת (לפי Survey ID)"):
+        save_items_to_disk(st.session_state["items_df"], survey_id)
+        st.success("נשמר לשרת — כעת Respondent עם אותו sid יראו את המאגר.")
     st.markdown("**קישור לשיתוף (לאחר פריסה/שיתוף):**")
     st.code("http://YOUR-APP/?sid=YOUR_SURVEY_ID&rid=USER123", language="bash")
     st.divider()
@@ -188,8 +224,10 @@ def run_task():
     k = st.number_input("כמה פריטים תקבל/י (K)", min_value=1, value=int(k), step=1)
     df = st.session_state.get("items_df")
     if df is None:
-        st.warning("המאגר טרם נטען (Admin). העלה קובץ במצב Admin.")
-        return
+        df = load_items_from_disk(sid)
+        if df is None:
+            st.warning("המאגר טרם נטען (Admin). העלה קובץ במצב Admin, או ודא שה-Survey ID נכון.")
+            return
     if not respondent_id.strip():
         st.info("יש להזין RID כדי להתחיל.")
         return
