@@ -1,5 +1,5 @@
-
 # app.py
+# Streamlit Prompt+Response Labeling — Persist+Cache + Admin Export (FIXED UnboundLocalError)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -131,13 +131,25 @@ def admin_panel():
     st.markdown("**קישור לשיתוף (לאחר פריסה/שיתוף):**")
     st.code("http://YOUR-APP/?sid=YOUR_SURVEY_ID&rid=USER123", language="bash")
 
+    st.divider()
+    st.subheader("⬇️ הורדת כל התשובות")
+    if st.button("ייצא כל התשובות ל-CSV"):
+        storage = get_storage()
+        df_all = storage.load_responses()
+        if df_all.empty:
+            st.warning("אין תשובות עדיין.")
+        else:
+            st.download_button("הורד responses.csv", data=df_all.to_csv(index=False).encode("utf-8"),
+                               file_name="responses_export.csv", mime="text/csv")
+            st.dataframe(df_all.tail(200))
+
 def run_task():
     sid = st.query_params.get("sid", [st.session_state.get("survey_id", SURVEY_ID)])
     if isinstance(sid, list): sid = sid[0]
     rid = st.query_params.get("rid", [""])
     if isinstance(rid, list): rid = rid[0]
     st.header("תיוג תשובות: אדם או מכונה?")
-    st.write('לכל פריט מוצגים פרומפט ותשובה. סמנו אם לדעתכם נכתב ע"י **אדם** או **מכונה**.')
+    st.write("לכל פריט מוצגים פרומפט ותשובה. סמנו אם לדעתכם נכתב ע\"י **אדם** או **מכונה**.")
     respondent_id = st.text_input("RID (מזהה נבדק)", value=rid, help="אפשר אימייל או מזהה פנימי.")
     k = st.session_state.get("k", DEFAULT_K)
     k = st.number_input("כמה פריטים תקבל/י (K)", min_value=1, value=int(k), step=1)
@@ -200,7 +212,7 @@ def run_task():
         st.success("התשובות נקלטו! תודה 🙏")
         st.balloons()
         st.subheader("🔎 סיכום אישי")
-        df_me = pd.DataFrame(rows)
+        df_me = pd.DataFrame(rows)  # <-- pd is top-level import; no local import = no UnboundLocalError
         st.write(f"מספר פריטים: **{len(df_me)}**")
         st.write(f"אחוז 'אדם' שסומנו: **{(df_me['label_bin'].mean()*100):.1f}%**")
         if df_me["truth"].notna().any():
@@ -208,7 +220,6 @@ def run_task():
             acc = (df_truth["label"] == df_truth["truth"]).mean() if not df_truth.empty else None
             if acc is not None:
                 st.write(f"דיוק (אם קיימת אמת-מידה): **{acc*100:.1f}%**")
-                import pandas as pd
                 cm = pd.crosstab(df_truth["truth"], df_truth["label"], dropna=False)
                 st.dataframe(cm)
         st.download_button("הורד CSV של התיוגים שלך", data=df_me.to_csv(index=False).encode("utf-8"),
@@ -225,3 +236,4 @@ if mode == "Admin":
     admin_panel()
 run_task()
 st.markdown("---")
+st.caption("נוצר ע\"י ChatGPT • Persist by SID (cache+disk) • CSV/Excel נתמך • יצוא ב-Admin • תיקון UnboundLocalError.")
