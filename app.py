@@ -149,7 +149,7 @@ def run_task():
     rid = st.query_params.get("rid", [""])
     if isinstance(rid, list): rid = rid[0]
     st.header("תיוג תשובות: אדם או מכונה?")
-    st.write("לכל פריט מוצגים פרומפט ותשובה. סמנו אם לדעתכם נכתב ע\"י **אדם** או **מכונה**.")
+    st.write("לכל פריט מוצגות שאלה ותשובה. סמנו את מקור התשובה עבור כל פריט.")
     respondent_id = st.text_input("RID (מזהה נבדק)", value=rid, help="אפשר אימייל או מזהה פנימי.")
     k = st.session_state.get("k", DEFAULT_K)
     k = st.number_input("כמה פריטים תקבל/י (K)", min_value=1, value=int(k), step=1)
@@ -180,7 +180,7 @@ def run_task():
     for i, row in sample_df.iterrows():
         with st.container(border=True):
             st.markdown(f"**פריט {i+1}** (ID: {row['id']})")
-            with st.expander("📜 Prompt", expanded=True):
+            with st.expander("❓ Question", expanded=True):
                 st.write(row["test_prompt"])
             with st.expander("📝 Response", expanded=True):
                 st.write(row["response"])
